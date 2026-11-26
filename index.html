@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calculator</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+  color-scheme:light;
+  --page:#e4e1d8;--case:#3a4048;--lcd:#bccaa6;--lcd-ink:#1b2618;--lcd-ghost:rgba(27,38,24,.12);
+  --key:#ebe7dc;--key-ink:#262a30;--op:#1f6f6b;--op-ink:#f2f7f6;--clr:#e0a030;--clr-ink:#2a1e05;--eq:#c4473a;--eq-ink:#fff6f4;
+  --mono:"Share Tech Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;--page:#16181c;--case:#252a31;--lcd:#8fa07c;--lcd-ink:#10180e;--lcd-ghost:rgba(16,24,14,.14);
+  --key:#cfcabd;--op:#2a8a85;--clr:#d49a2c;
+}}
+:root[data-theme="dark"]{color-scheme:dark;--page:#16181c;--case:#252a31;--lcd:#8fa07c;--lcd-ink:#10180e;--lcd-ghost:rgba(16,24,14,.14);--key:#cfcabd;--op:#2a8a85;--clr:#d49a2c}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--page);font-family:var(--mono);padding:16px}
+.calc{width:min(340px,100%);background:var(--case);border-radius:22px;padding:18px;box-shadow:0 18px 40px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.08)}
+.screen{position:relative;background:var(--lcd);color:var(--lcd-ink);border-radius:10px;padding:10px 14px 12px;margin-bottom:16px;box-shadow:inset 0 3px 8px rgba(0,0,0,.35)}
+.meta{display:flex;justify-content:space-between;height:18px;font-size:14px;opacity:.75}
+.num{position:relative;text-align:right;font-size:52px;line-height:1.1;letter-spacing:.02em;white-space:nowrap;overflow:hidden}
+.num::before{content:"88888888";position:absolute;right:0;color:var(--lcd-ghost);z-index:0;pointer-events:none}
+.num span{position:relative;z-index:1}
+.pad{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+button{font:inherit;font-size:24px;height:56px;border:0;border-radius:12px;cursor:pointer;background:var(--key);color:var(--key-ink);box-shadow:0 3px 0 rgba(0,0,0,.35);transition:transform .06s,box-shadow .06s}
+button:active{transform:translateY(3px);box-shadow:0 0 0 rgba(0,0,0,.35)}
+button:focus-visible{outline:3px solid #fff;outline-offset:2px}
+.op{background:var(--op);color:var(--op-ink)}
+.clr{background:var(--clr);color:var(--clr-ink)}
+.eq{background:var(--eq);color:var(--eq-ink)}
+.zero{grid-column:span 2}
+.pad.is-err button:not([data-k="AC"]){opacity:.4;cursor:not-allowed}
+@media (prefers-reduced-motion:reduce){button{transition:none}}
+</style>
+</head>
+<body>
+<main class="calc" aria-label="Calculator">
+  <div class="screen" role="status" aria-live="polite">
+    <div class="meta"><span id="opShow"></span><span id="errShow"></span></div>
+    <div class="num"><span id="display">0</span></div>
+  </div>
+  <div class="pad" id="pad">
+    <button class="clr" data-k="AC">AC</button>
+    <button class="clr" data-k="C">C</button>
+    <button class="op" data-k="neg">+/−</button>
+    <button class="op" data-k="/">÷</button>
+    <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+    <button class="op" data-k="*">×</button>
+    <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+    <button class="op" data-k="-">−</button>
+    <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+    <button class="op" data-k="+">+</button>
+    <button class="zero" data-k="0">0</button>
+    <button data-k=".">.</button>
+    <button class="eq" data-k="=">=</button>
+  </div>
+</main>
+<script>
+(function(){
+  var MAX_DIGITS = 8, MAX_DEC = 3;
+  var s;
+  var SYM = {"+":"+","-":"−","*":"×","/":"÷"};
+
+  function reset(){
+    s = {acc:null, op:null, cur:"0", fresh:true, afterOp:false, done:false, err:false};
+  }
+  function digitCount(str){ return str.replace(/[^0-9]/g,"").length; }
+  function decCount(str){ var i = str.indexOf("."); return i < 0 ? 0 : str.length - i - 1; }
+
+  function fmt(n){
+    if (!isFinite(n)) return null;
+    n = Math.round(n * 1000) / 1000;
+    var intDigits = String(Math.trunc(Math.abs(n))).length;
+    if (intDigits > MAX_DIGITS) return null;
+    var places = Math.min(MAX_DEC, MAX_DIGITS - intDigits);
+    var t = n.toFixed(places);
+    if (t.indexOf(".") >= 0) t = t.replace(/0+$/,"").replace(/\.$/,"");
+    if (t === "-0") t = "0";
+    return t;
+  }
+
+  function calc(a, op, b){
+    if (op === "+" || op === "-"){
+      var d = Math.max(decCount(String(a)), decCount(String(b)));
+      var f = Math.pow(10, d);
+      var A = Math.round(a * f), B = Math.round(b * f);
+      return (op === "+" ? A + B : A - B) / f;
+    }
+    if (op === "*") return a * b;
+    if (op === "/") return b === 0 ? NaN : a / b;
+  }
+
+  function fail(){ s.err = true; s.acc = null; s.op = null; s.cur = "0"; s.fresh = true; }
+
+  function digit(d){
+    if (s.done){ s.acc = null; s.op = null; s.done = false; }
+    if (s.fresh){ s.cur = d; s.fresh = false; }
+    else if (digitCount(s.cur) < MAX_DIGITS){
+      if (s.cur === "0") s.cur = d;
+      else if (s.cur === "-0") s.cur = "-" + d;
+      else if (decCount(s.cur) < MAX_DEC || s.cur.indexOf(".") < 0) s.cur += d;
+    }
+    s.afterOp = false;
+  }
+
+  function dot(){
+    if (s.done){ s.acc = null; s.op = null; s.done = false; }
+    if (s.fresh){ s.cur = "0."; s.fresh = false; }
+    else if (s.cur.indexOf(".") < 0 && digitCount(s.cur) < MAX_DIGITS) s.cur += ".";
+    s.afterOp = false;
+  }
+
+  function operator(o){
+    if (s.afterOp){ s.op = o; return; }
+    var val = parseFloat(s.cur);
+    if (s.op !== null && s.acc !== null){
+      var r = fmt(calc(s.acc, s.op, val));
+      if (r === null){ fail(); return; }
+      s.acc = parseFloat(r); s.cur = r;
+    } else {
+      s.acc = val;
+    }
+    s.op = o; s.fresh = true; s.afterOp = true; s.done = false;
+  }
+
+  function equals(){
+    if (s.op === null || s.acc === null) return;
+    var b = s.afterOp ? s.acc : parseFloat(s.cur);
+    var r = fmt(calc(s.acc, s.op, b));
+    if (r === null){ fail(); return; }
+    s.cur = r; s.acc = null; s.op = null; s.fresh = true; s.afterOp = false; s.done = true;
+  }
+
+  function clearEntry(){
+    if (s.afterOp){
+      s.cur = fmt(s.acc); s.acc = null; s.op = null; s.afterOp = false; s.fresh = true;
+    } else {
+      s.cur = "0"; s.fresh = true;
+    }
+  }
+
+  function negate(){
+    if (s.cur === "0" && s.fresh) return;
+    s.cur = s.cur.charAt(0) === "-" ? s.cur.slice(1) : "-" + s.cur;
+    if (s.afterOp){ s.afterOp = false; s.fresh = false; }
+  }
+
+  function press(k){
+    if (k === "AC"){ reset(); render(); return; }
+    if (s.err){ return; }
+    if (k >= "0" && k <= "9" && k.length === 1) digit(k);
+    else if (k === ".") dot();
+    else if (k === "C") clearEntry();
+    else if (k === "neg") negate();
+    else if (k === "=") equals();
+    else operator(k);
+    render();
+  }
+
+  var elDisplay = document.getElementById("display");
+  var elOp = document.getElementById("opShow");
+  var elErr = document.getElementById("errShow");
+  var elPad = document.getElementById("pad");
+  function render(){
+    elDisplay.textContent = s.err ? "ERR" : s.cur;
+    elOp.textContent = s.op ? SYM[s.op] : "";
+    elErr.textContent = s.err ? "press AC" : "";
+    elPad.classList.toggle("is-err", s.err);
+  }
+
+  elPad.addEventListener("click", function(e){
+    var b = e.target.closest("button");
+    if (b) press(b.getAttribute("data-k"));
+  });
+  document.addEventListener("keydown", function(e){
+    var k = e.key;
+    if (/^[0-9]$/.test(k) || "+-*/.".indexOf(k) >= 0) press(k);
+    else if (k === "Enter" || k === "="){ e.preventDefault(); press("="); }
+    else if (k === "Backspace") press("C");
+    else if (k === "Escape") press("AC");
+    else if (k === "n" || k === "N" || k === "F9") press("neg");
+  });
+
+  reset(); render();
+})();
+</script>
+</body>
+</html>
